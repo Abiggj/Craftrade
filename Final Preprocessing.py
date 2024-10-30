@@ -13,5 +13,8 @@ merged_df.sort_values(by='Date', inplace=True)
 merged_df.dropna(inplace=True)
 
 merged_df.reset_index(drop=True, inplace=True)
+columns_to_drop = [col for col in merged_df.columns if 'Adj_Close' in col or 'Volume' in col]
+merged_df = merged_df.drop(columns=columns_to_drop)
+
 
 merged_df.to_csv('data.csv', index=False)
