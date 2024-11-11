@@ -61,7 +61,7 @@ stages:
         steps:
           - task: AzureCLI@2
             inputs:
-              azureSubscription: '<YOUR_SERVICE_CONNECTION_NAME>'
+              azureSubscription: 'Abiggj'   # Service connection name, replace with your actual service connection name
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
