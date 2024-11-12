@@ -1,0 +1,47 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  pythonVersion: '3.9'
+  venvPath: '$(Build.SourcesDirectory)/venv'
+
+stages:
+  - stage: SetupEnvironment
+    displayName: 'Set Up Environment'
+    jobs:
+      - job: Setup
+        displayName: 'Setting up Python environment'
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: $(pythonVersion)
+          - script: |
+              echo "Creating virtual environment..."
+              python -m venv $(venvPath)
+              echo "Activating virtual environment..."
+              source $(venvPath)/bin/activate
+              echo "Upgrading pip..."
+              pip install --upgrade pip
+              echo "Installing dependencies from requirements.txt..."
+              pip install -r requirements.txt
+            displayName: 'Install Dependencies'
+
+  - stage: RunServer
+    displayName: 'Run Flask Server'
+    dependsOn: SetupEnvironment
+    condition: succeeded()
+    jobs:
+      - job: Deploy
+        displayName: 'Run Flask Application'
+        steps:
+          - script: |
+              echo "Activating virtual environment..."
+              source $(venvPath)/bin/activate
+              echo "Running Flask server..."
+              python server.py
+            displayName: 'Run Flask Server'
