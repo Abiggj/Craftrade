@@ -23,6 +23,10 @@ stages:
           - script: |
               echo "Creating virtual environment..."
               python -m venv $(venvPath)
+              if [ ! -d "$(venvPath)" ]; then
+                echo "Virtual environment creation failed."
+                exit 1
+              fi
               echo "Activating virtual environment..."
               source $(venvPath)/bin/activate
               echo "Upgrading pip..."
@@ -42,6 +46,10 @@ stages:
           - script: |
               echo "Activating virtual environment..."
               source $(venvPath)/bin/activate
+              if [ $? -ne 0 ]; then
+                echo "Failed to activate the virtual environment."
+                exit 1
+              fi
               echo "Running Flask server..."
               python server.py
             displayName: 'Run Flask Server'
