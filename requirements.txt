@@ -1,4 +1,7 @@
-tensorflow==2.1.0
-numpy==1.21.0
-pandas==1.3.0
-scikit-learn==0.24.2
+flask==2.0.1        # Flask for the server (server.py)
+numpy==1.21.0       # Numerical operations in preprocessing
+pandas==1.3.0       # Data manipulation for preprocessing scripts
+requests==2.26.0    # To make HTTP requests in data scraping scripts
+scikit-learn==0.24.2  # Machine learning algorithms
+beautifulsoup4==4.10.0  # For web scraping if needed
+selenium==3.141.0   # For browser automation, indicated by chromedriver.exe
