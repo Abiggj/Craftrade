@@ -1,0 +1,70 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  pythonVersion: '3.9'
+  venvPath: '$(Build.SourcesDirectory)/venv'
+
+stages:
+  - stage: SetupEnvironment
+    displayName: 'Set Up Environment'
+    jobs:
+      - job: Setup
+        displayName: 'Setting up Python environment'
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: $(pythonVersion)
+          - script: |
+              python -m venv $(venvPath)
+              source $(venvPath)/bin/activate
+              pip install --upgrade pip
+              pip install -r requirements.txt
+            displayName: 'Install Dependencies'
+
+  - stage: RunTests
+    displayName: 'Run Unit Tests'
+    dependsOn: SetupEnvironment
+    jobs:
+      - job: Test
+        displayName: 'Running unit tests'
+        steps:
+          - script: |
+              source $(venvPath)/bin/activate
+              pytest tests/
+            displayName: 'Run Unit Tests with pytest'
+
+  - stage: TrainModel
+    displayName: 'Train Machine Learning Model'
+    dependsOn: RunTests
+    jobs:
+      - job: Train
+        displayName: 'Training the Model'
+        steps:
+          - script: |
+              source $(venvPath)/bin/activate
+              python train.py
+            displayName: 'Run Model Training'
+
+  - stage: DeployModel
+    displayName: 'Deploy Trained Model'
+    dependsOn: TrainModel
+    condition: succeeded()
+    jobs:
+      - job: Deploy
+        displayName: 'Deploy the Model to Azure'
+        steps:
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: '<YOUR_AZURERM_SERVICE_CONNECTION_NAME>'   # Replace with the AzureRM service connection name
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                source $(venvPath)/bin/activate
+                python deploy.py
+            displayName: 'Deploy the Model to Azure using Azure CLI'

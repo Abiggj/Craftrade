@@ -1,0 +1,129 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  pythonVersion: '3.9'
+  venvPath: '$(Build.SourcesDirectory)/venv'
+
+stages:
+  - stage: SetupEnvironment
+    displayName: 'Set Up Environment'
+    jobs:
+      - job: Setup
+        displayName: 'Setting up Python environment'
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: $(pythonVersion)
+          - script: |
+              echo "Creating virtual environment..."
+              python -m venv $(venvPath)
+              if [ $? -ne 0 ]; then
+                echo "Failed to create virtual environment"
+                exit 1
+              fi
+
+              echo "Activating virtual environment..."
+              source $(venvPath)/bin/activate
+              if [ $? -ne 0 ]; then
+                echo "Failed to activate virtual environment"
+                exit 1
+              fi
+
+              echo "Upgrading pip..."
+              pip install --upgrade pip
+              if [ $? -ne 0 ]; then
+                echo "Failed to upgrade pip"
+                exit 1
+              fi
+
+              echo "Installing dependencies from requirements.txt..."
+              pip install -r requirements.txt
+              if [ $? -ne 0 ]; then
+                echo "Failed to install dependencies"
+                exit 1
+              fi
+
+              echo "Checking installed packages..."
+              pip freeze
+            displayName: 'Install Dependencies with Error Handling'
+
+  - stage: RunTests
+    displayName: 'Run Unit Tests'
+    dependsOn: SetupEnvironment
+    jobs:
+      - job: Test
+        displayName: 'Running unit tests'
+        steps:
+          - script: |
+              echo "Activating virtual environment..."
+              source $(venvPath)/bin/activate
+              if [ $? -ne 0 ]; then
+                echo "Failed to activate virtual environment"
+                exit 1
+              fi
+
+              echo "Running unit tests with pytest..."
+              pytest tests/
+              if [ $? -ne 0 ]; then
+                echo "Unit tests failed"
+                exit 1
+              fi
+            displayName: 'Run Unit Tests with pytest'
+
+  - stage: TrainModel
+    displayName: 'Train Machine Learning Model'
+    dependsOn: RunTests
+    jobs:
+      - job: Train
+        displayName: 'Training the Model'
+        steps:
+          - script: |
+              echo "Activating virtual environment..."
+              source $(venvPath)/bin/activate
+              if [ $? -ne 0 ]; then
+                echo "Failed to activate virtual environment"
+                exit 1
+              fi
+
+              echo "Running model training..."
+              python train.py
+              if [ $? -ne 0 ]; then
+                echo "Model training failed"
+                exit 1
+              fi
+            displayName: 'Run Model Training'
+
+  - stage: DeployModel
+    displayName: 'Deploy Trained Model'
+    dependsOn: TrainModel
+    condition: succeeded()
+    jobs:
+      - job: Deploy
+        displayName: 'Deploy the Model to Azure'
+        steps:
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: 'MLOPS'  
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                echo "Activating virtual environment..."
+                source $(venvPath)/bin/activate
+                if [ $? -ne 0 ]; then
+                  echo "Failed to activate virtual environment"
+                  exit 1
+                fi
+
+                echo "Deploying model using deploy.py..."
+                python deploy.py
+                if [ $? -ne 0 ]; then
+                  echo "Model deployment failed"
+                  exit 1
+                fi
+            displayName: 'Deploy the Model to Azure using Azure CLI'
