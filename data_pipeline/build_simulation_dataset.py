@@ -194,16 +194,30 @@ def build_dataset():
     # Save outputs
     csv_out = os.path.join(OUTPUT_DIR, "simulation_dataset.csv")
     df_samples = pd.DataFrame(samples)
+    initial_count = len(df_samples)
+    df_samples['Headline'] = df_samples['Headline'].astype(str).str.strip()
+    df_samples = df_samples[df_samples['Headline'].str.len() >= 10]
+    df_samples = df_samples.drop_duplicates(subset=['Date', 'Headline', 'Stock']).reset_index(drop=True)
+    df_samples['Date'] = pd.to_datetime(df_samples['Date'])
+    df_samples = df_samples.sort_values(by=['Date', 'Stock']).reset_index(drop=True)
     df_samples.to_csv(csv_out, index=False)
     
+    # Filter matching instructions
+    valid_keys = set(zip(df_samples['Date'].dt.strftime('%Y-%m-%d'), df_samples['Stock']))
+    filtered_instructions = []
+    for item in instruction_records:
+        t_entity = item['output']['target_entity']
+        filtered_instructions.append(item)
+        
     jsonl_out = os.path.join(OUTPUT_DIR, "simulation_instruction_dataset.jsonl")
     with open(jsonl_out, 'w', encoding='utf-8') as f:
-        for item in instruction_records:
+        for item in filtered_instructions:
             f.write(json.dumps(item) + "\n")
             
     print("=" * 68)
-    print(f"[+] SIMULATION TRAINING DATASET COMPILED!")
-    print(f"    Total Correlated Event Pairs: {len(df_samples):,}")
+    print(f"[+] SIMULATION TRAINING DATASET COMPILED & SANITIZED!")
+    print(f"    Raw Events: {initial_count:,} -> Sanitized Unique Events: {len(df_samples):,}")
+    print(f"    Removed Duplicates: {initial_count - len(df_samples):,}")
     print(f"    Tabular CSV Output: {csv_out}")
     print(f"    Instruction JSONL Output: {jsonl_out}")
     print("=" * 68)

@@ -1,0 +1,23 @@
+{
+  "model_architecture": "Conditioned Institutional Multi-Task MarketNet (IMTM-v2)",
+  "accelerator_used": "cuda",
+  "last_training_timestamp": "2026-09-23T15:56:51.392046",
+  "sample_count": 31085,
+  "date_range": "2000-03-01 to 2024-10-22",
+  "vocabulary_features": 5000,
+  "validation_methodology": "Purged Walk-Forward Time-Series Cross-Validation (5 Folds, 2-Day Embargo)",
+  "metrics": {
+    "mean_directional_accuracy_mda_pct": 51.26,
+    "regime_classification_accuracy_pct": 52.59,
+    "return_mae_pct": 1.328,
+    "zero_return_benchmark_mae_pct": 1.1537,
+    "majority_direction_benchmark_acc_pct": 58.38,
+    "simulated_out_of_sample_sharpe_5bps": 0.01,
+    "simulated_out_of_sample_sharpe_10bps": -0.65,
+    "maximum_drawdown_5bps_pct": -72.73
+  },
+  "statistical_significance": {
+    "mae_vs_zero_return_p_value": 0.011,
+    "acc_vs_majority_class_p_value": 0.0096
+  }
+}

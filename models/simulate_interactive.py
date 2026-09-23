@@ -18,12 +18,58 @@ import re
 import json
 import pickle
 import requests
+import numpy as np
 from datetime import datetime
+
+try:
+    import torch
+    import torch.nn as nn
+    HAS_TORCH = True
+except ImportError:
+    HAS_TORCH = False
 
 MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "model_files")
 MODEL_PATH = os.path.join(MODEL_DIR, "local_simulator.pkl")
 METRICS_PATH = os.path.join(MODEL_DIR, "evaluation_metrics.json")
+CHECKPOINT_PATH = os.path.join(MODEL_DIR, "checkpoints", "imtm_best_checkpoint.pt")
+VECTORIZER_PATH = os.path.join(MODEL_DIR, "vectorizer.pkl")
 SESSION_HISTORY_FILE = os.path.join(MODEL_DIR, "simulation_session_history.jsonl")
+
+if HAS_TORCH:
+    class DeepMultiTaskMarketNet(nn.Module):
+        def __init__(self, text_dim, num_stocks, num_directions, stock_embed_dim=16):
+            super().__init__()
+            self.stock_embedding = nn.Embedding(num_stocks, stock_embed_dim)
+            self.text_encoder = nn.Sequential(
+                nn.Linear(text_dim, 256),
+                nn.BatchNorm1d(256),
+                nn.SiLU(),
+                nn.Dropout(0.25)
+            )
+            self.fusion_layer = nn.Sequential(
+                nn.Linear(256 + stock_embed_dim, 128),
+                nn.BatchNorm1d(128),
+                nn.SiLU(),
+                nn.Dropout(0.2)
+            )
+            self.direction_head = nn.Linear(128, num_directions)
+            self.return_head = nn.Linear(128, 1)
+            self.volatility_head = nn.Sequential(
+                nn.Linear(128, 1),
+                nn.Softplus()
+            )
+
+        def forward(self, x_text, x_stock):
+            t_feat = self.text_encoder(x_text)
+            s_emb = self.stock_embedding(x_stock)
+            combined = torch.cat([t_feat, s_emb], dim=-1)
+            feat = self.fusion_layer(combined)
+            return (
+                self.direction_head(feat),
+                self.return_head(feat).squeeze(-1),
+                self.volatility_head(feat).squeeze(-1)
+            )
+
 
 # Scope Taxonomy
 SCOPE_SYSTEMIC_MACRO = "SYSTEMIC / SOVEREIGN CRISIS"
@@ -104,6 +150,67 @@ class InstitutionalSimulator:
     def __init__(self):
         self.metrics = self._load_evaluation_metrics()
         self.session_count = self._count_session_history()
+        self.device = torch.device("cuda" if (HAS_TORCH and torch.cuda.is_available()) else "cpu") if HAS_TORCH else "cpu"
+        self.nn_model, self.nn_meta = self._load_neural_model()
+
+    def _load_neural_model(self):
+        """Loads optimal trained PyTorch checkpoint and vectorizer if available."""
+        if not HAS_TORCH:
+            return None, None
+        if os.path.exists(CHECKPOINT_PATH) and os.path.exists(VECTORIZER_PATH):
+            try:
+                with open(VECTORIZER_PATH, "rb") as f:
+                    meta = pickle.load(f)
+                ckpt = torch.load(CHECKPOINT_PATH, map_location=self.device, weights_only=False)
+                model = DeepMultiTaskMarketNet(
+                    text_dim=ckpt['text_dim'],
+                    num_stocks=ckpt['num_stocks'],
+                    num_directions=ckpt['num_directions']
+                ).to(self.device)
+                model.load_state_dict(ckpt['model_state_dict'])
+                model.eval()
+                return model, meta
+            except Exception as e:
+                return None, None
+        return None, None
+
+    def predict_neural(self, headline: str, target_str: str):
+        """Generates forward inference from the trained deep multi-task network."""
+        if not self.nn_model or not self.nn_meta:
+            return None
+        try:
+            vec = self.nn_meta['vectorizer']
+            stocks = self.nn_meta['stocks']
+            directions = self.nn_meta['directions']
+            stock_to_idx = self.nn_meta['stock_to_idx']
+
+            # Match ticker
+            matched_stock = "SYSTEMIC"
+            for s in stocks:
+                if s in target_str.upper():
+                    matched_stock = s
+                    break
+
+            s_idx = stock_to_idx.get(matched_stock, 0)
+            x_feat = vec.transform([headline]).astype(np.float32)
+            
+            bx = torch.tensor(x_feat.toarray(), dtype=torch.float32).to(self.device)
+            bs = torch.tensor([s_idx], dtype=torch.long).to(self.device)
+
+            with torch.no_grad():
+                out_d, out_r, out_w = self.nn_model(bx, bs)
+                pred_dir_idx = out_d.argmax(dim=-1).item()
+                pred_ret = out_r.item()
+                pred_swing = out_w.item()
+
+            return {
+                "matched_ticker": matched_stock,
+                "projected_movement": directions[pred_dir_idx],
+                "projected_return_pct": round(pred_ret, 2),
+                "projected_volatility_pct": round(pred_swing, 2)
+            }
+        except Exception:
+            return None
 
     def _load_evaluation_metrics(self):
         """Loads quantitative backtest accuracy metrics."""
@@ -115,10 +222,10 @@ class InstitutionalSimulator:
             except Exception:
                 pass
         return {
-            "mean_directional_accuracy_mda_pct": 74.6,
-            "regime_classification_accuracy_pct": 82.1,
-            "return_mae_pct": 1.15,
-            "simulated_annualized_sharpe_ratio": 1.84
+            "mean_directional_accuracy_mda_pct": 51.3,
+            "regime_classification_accuracy_pct": 52.0,
+            "return_mae_pct": 1.33,
+            "simulated_out_of_sample_sharpe_5bps": 0.09
         }
 
     def _count_session_history(self):
@@ -320,10 +427,14 @@ class InstitutionalSimulator:
                 "precedent": HISTORICAL_PRECEDENTS_DB[5] if "tcs" in lower else HISTORICAL_PRECEDENTS_DB[4]
             }
 
+        # Neural network forward prediction
+        nn_pred = self.predict_neural(headline, classification["target_entity"])
+
         res = {
             "headline": headline,
             "classification": classification,
-            "metrics": metrics
+            "metrics": metrics,
+            "neural_forecast": nn_pred
         }
         
         # Checkpoint session
@@ -341,8 +452,8 @@ class InstitutionalSimulator:
 
         lines = []
         lines.append(sep)
-        lines.append("CRAFTRADE INSTITUTIONAL MARKET SIMULATOR [RISK ENGINE V2.5]")
-        lines.append(f"ACCURACY VERIFICATION : MDA (Hit Ratio) {self.metrics.get('mean_directional_accuracy_mda_pct', 74.6)}% | Backtest Sharpe: {self.metrics.get('simulated_annualized_sharpe_ratio', 1.84)}")
+        lines.append("CRAFTRADE INSTITUTIONAL MARKET SIMULATOR [RISK ENGINE V2.5 - REMEDIATED]")
+        lines.append(f"ACCURACY VERIFICATION : MDA (Hit Ratio) {self.metrics.get('mean_directional_accuracy_mda_pct', 51.3)}% | Return MAE: {self.metrics.get('return_mae_pct', 1.33)}% | Net Sharpe (5 bps): {self.metrics.get('simulated_out_of_sample_sharpe_5bps', 0.09)}")
         lines.append(f"SESSION CHECKPOINT    : Scenario #{self.session_count} Preserved in History")
         lines.append(sep)
         lines.append(f"INPUT HEADLINE : \"{sim['headline']}\"")
@@ -351,6 +462,16 @@ class InstitutionalSimulator:
         lines.append(f"TARGET ASSET   : {c['target_entity']}")
         lines.append(f"CIRCUIT RISK   : {c['circuit_breaker_risk']}")
         lines.append(subsep)
+
+        # Quantitative Deep Neural Network Forecast Block
+        if sim.get("neural_forecast"):
+            nn = sim["neural_forecast"]
+            lines.append("QUANTITATIVE DEEP NEURAL NETWORK FORECAST (IMTM-v2):")
+            lines.append(f"  CONDITIONED ASSET   : {nn['matched_ticker']}")
+            lines.append(f"  PREDICTED MOVEMENT  : {nn['projected_movement']}")
+            lines.append(f"  PROJECTED DAY RETURN: {nn['projected_return_pct']:+.2f}%")
+            lines.append(f"  INTRADAY VOLATILITY : {nn['projected_volatility_pct']:.2f}%")
+            lines.append(subsep)
 
         # Macro section
         if c["scope"] in [SCOPE_SYSTEMIC_MACRO, SCOPE_MACRO_REGULATORY]:
