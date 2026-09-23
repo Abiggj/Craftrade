@@ -1,7 +1,9 @@
 """
 Simulation Dataset Builder for CrafTrade.
-Pairs historical news headlines with real next-day stock and sector price impacts.
-Generates structured training datasets (CSV and JSONL) for local LLM simulation.
+Pairs high-volume multi-source news headlines with real next-day market responses:
+- Corporate level: TCS, INFY, HDFC Bank, etc.
+- Systemic / Macro level: NIFTY 50, SENSEX, INDIA VIX
+Generates clean tabular dataset (CSV) and LLM instruction dataset (JSONL).
 """
 
 import os
@@ -25,12 +27,12 @@ SECTOR_MAP = {
     "ICICIBANK": "Banking & Finance",
     "SBIN": "Banking & Finance",
     "AXISBANK": "Banking & Finance",
-    "IDBI": "Banking & Finance"
-}
-
-SECTOR_INDEX_MAP = {
-    "IT Services": "NIFTY_IT",
-    "Banking & Finance": "NIFTY_BANK"
+    "KOTAKBANK": "Banking & Finance",
+    "RELIANCE": "Energy & Conglomerate",
+    "TATAMOTORS": "Automobiles",
+    "NIFTY50": "Macro / Benchmark",
+    "SENSEX": "Macro / Benchmark",
+    "SYSTEMIC": "Sovereign / Macro"
 }
 
 PEERS_MAP = {
@@ -43,7 +45,8 @@ PEERS_MAP = {
     "ICICIBANK": ["HDFCBANK", "SBIN", "AXISBANK"],
     "SBIN": ["HDFCBANK", "ICICIBANK", "AXISBANK"],
     "AXISBANK": ["HDFCBANK", "ICICIBANK", "SBIN"],
-    "IDBI": ["SBIN", "AXISBANK", "ICICIBANK"]
+    "RELIANCE": ["TCS", "HDFCBANK", "INFY"],
+    "SYSTEMIC": ["NIFTY50", "SENSEX", "NIFTY_BANK"]
 }
 
 def load_stock_matrix():
@@ -69,35 +72,44 @@ def build_dataset():
     stock_df = load_stock_matrix()
     trading_dates = stock_df['Date'].tolist()
     
-    # Load parsed news
-    news_file = os.path.join(NEWS_DIR, "historical_news_parsed.csv")
-    if not os.path.exists(news_file):
-        # Fallback to news.csv in root
-        news_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "news.csv")
-        if not os.path.exists(news_file):
-            raise FileNotFoundError("Parsed news not found! Please run fetch_news.py first.")
+    # Priority order for finding news files
+    candidates = [
+        os.path.join(NEWS_DIR, "master_financial_news.csv"),
+        os.path.join(NEWS_DIR, "historical_news_parsed.csv"),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "news.csv")
+    ]
+    
+    news_file = None
+    for cand in candidates:
+        if os.path.exists(cand):
+            news_file = cand
+            break
             
-    print(f"[*] Loading news from {news_file}...")
+    if not news_file:
+        raise FileNotFoundError("Parsed news not found! Please run fetch_news.py first.")
+            
+    print(f"[*] Ingesting news from {news_file}...")
     news_df = pd.read_csv(news_file)
-    news_df['Date'] = pd.to_datetime(news_df['Date'])
+    news_df['Date'] = pd.to_datetime(news_df['Date'], errors='coerce')
+    news_df = news_df.dropna(subset=['Date', 'News'])
     
     samples = []
     instruction_records = []
     
-    print("[*] Correlating news events with next-day price impacts...")
+    print(f"[*] Correlating {len(news_df):,} news events with real market responses...")
     for idx, row in news_df.iterrows():
         news_date = row['Date']
-        headline = row.get('News', row.get('news', ''))
+        headline = str(row.get('News', row.get('news', ''))).strip()
         entities = row.get('Entities', [])
+        
         if isinstance(entities, str):
             try:
                 entities = ast.literal_eval(entities)
             except:
                 entities = []
                 
-        # If no explicit entities detected, scan headline for common stock keywords
         if not entities:
-            lower = str(headline).lower()
+            lower = headline.lower()
             for comp in SECTOR_MAP.keys():
                 if comp.lower() in lower:
                     entities.append(comp)
@@ -105,7 +117,6 @@ def build_dataset():
         if not entities:
             continue
             
-        # Find next trading date
         future_dates = [d for d in trading_dates if d >= news_date]
         if len(future_dates) < 2:
             continue
@@ -117,10 +128,11 @@ def build_dataset():
         row_t1 = stock_df[stock_df['Date'] == t1_date].iloc[0]
         
         for stock in entities:
-            close_col = f"Close_{stock}"
-            open_col = f"Open_{stock}"
-            high_col = f"High_{stock}"
-            low_col = f"Low_{stock}"
+            eval_ticker = "NIFTY50" if stock == "SYSTEMIC" else stock
+            close_col = f"Close_{eval_ticker}"
+            open_col = f"Open_{eval_ticker}"
+            high_col = f"High_{eval_ticker}"
+            low_col = f"Low_{eval_ticker}"
             
             if close_col not in stock_df.columns or open_col not in stock_df.columns:
                 continue
@@ -138,7 +150,6 @@ def build_dataset():
             day_return_pct = ((close_t1 - close_t) / close_t) * 100
             swing_pct = ((high_t1 - low_t1) / open_t1) * 100
             
-            # Direction classification
             if day_return_pct > 1.2:
                 direction = "Bullish / Surge"
             elif day_return_pct < -1.2:
@@ -153,7 +164,7 @@ def build_dataset():
             
             sample = {
                 "Date": news_date.strftime('%Y-%m-%d'),
-                "Headline": str(headline)[:500],
+                "Headline": headline[:500],
                 "Stock": stock,
                 "Sector": sector,
                 "Base_Price": round(float(close_t), 2),
@@ -165,42 +176,37 @@ def build_dataset():
             }
             samples.append(sample)
             
-            # Formulate structured LLM simulation pair
             inst_obj = {
-                "instruction": "You are a quantitative market simulation analyst. Given the financial news headline, identify the affected stock, simulate the next-day price impact, directional trend, and explain the underlying market mechanism so the user learns how news drives stock movements.",
-                "input": f"News Headline: \"{str(headline)[:300]}\"",
+                "instruction": "You are an institutional quantitative market simulation strategist. Given the financial or political event, analyze the impact on benchmark indices and target stocks.",
+                "input": f"Event Headline: \"{headline[:300]}\"",
                 "output": {
-                    "primary_stock_affected": stock,
-                    "sector": sector,
+                    "target_entity": stock,
+                    "sector_scope": sector,
                     "projected_movement": direction,
                     "estimated_gap_percent": round(float(gap_pct), 2),
                     "estimated_day_return_percent": round(float(day_return_pct), 2),
-                    "expected_volatility": "High" if swing_pct > 2.0 else "Normal",
-                    "sector_peer_spillover": peers[:3],
-                    "educational_explanation": (
-                        f"When news like this breaks regarding {stock}, markets typically react with a {direction.lower()} bias. "
-                        f"On the next trading session, the stock experienced an estimated return of {round(float(day_return_pct), 2)}% "
-                        f"with an intraday price swing of {round(float(swing_pct), 2)}%. Peers in the {sector} sector ({', '.join(peers[:3])}) "
-                        f"often experience secondary sympathy movements due to shared sectoral sentiment."
-                    )
+                    "intraday_volatility_swing": round(float(swing_pct), 2),
+                    "correlated_assets": peers[:3]
                 }
             }
             instruction_records.append(inst_obj)
 
-    # Save to CSV
+    # Save outputs
     csv_out = os.path.join(OUTPUT_DIR, "simulation_dataset.csv")
     df_samples = pd.DataFrame(samples)
     df_samples.to_csv(csv_out, index=False)
     
-    # Save to JSONL
     jsonl_out = os.path.join(OUTPUT_DIR, "simulation_instruction_dataset.jsonl")
     with open(jsonl_out, 'w', encoding='utf-8') as f:
         for item in instruction_records:
             f.write(json.dumps(item) + "\n")
             
-    print(f"[+] Dataset created successfully!")
-    print(f"    - Tabular dataset: {csv_out} ({len(df_samples)} examples)")
-    print(f"    - LLM instruction dataset: {jsonl_out} ({len(instruction_records)} training records)")
+    print("=" * 68)
+    print(f"[+] SIMULATION TRAINING DATASET COMPILED!")
+    print(f"    Total Correlated Event Pairs: {len(df_samples):,}")
+    print(f"    Tabular CSV Output: {csv_out}")
+    print(f"    Instruction JSONL Output: {jsonl_out}")
+    print("=" * 68)
 
 if __name__ == "__main__":
     build_dataset()
