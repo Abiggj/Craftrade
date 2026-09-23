@@ -1,0 +1,10 @@
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.pkl
+*.h5
+data/stocks/
+data/dataset/
+data/news/
+.DS_Store
