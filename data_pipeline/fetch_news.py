@@ -1,11 +1,11 @@
 """
 High-Volume Multi-Source Financial News Aggregator for CrafTrade.
-Dramatically expands news volume and diversity across:
-1. Multi-Publisher Financial RSS Streams (Economic Times, LiveMint, MoneyControl, Financial Express)
-2. Topic-Specific Google News Aggregation (Macro, Political, Banking, IT, Regulatory, Global Shocks)
-3. Direct Yahoo Finance Corporate News Feeds for All Tickers
-4. Comprehensive Historical Shock Event Registry (1998 - 2024)
-5. Parsing and Segmenting Existing Historical News Archives
+Extracts hundreds of thousands of historical headlines till date:
+1. High-Precision Parser for the 100+ local archives in ./news/ (2010 - 2024)
+   - Splits concatenated daily headline streams into discrete, deduplicated headlines.
+2. Live & Recent Financial News Aggregator (Till Date) via Multi-Source RSS & Google News
+3. Direct Yahoo Finance Corporate News Feeds
+4. Curated Historical Turning Points & Black Swan Shocks (1998 - 2024)
 """
 
 import os
@@ -36,33 +36,23 @@ COMPANY_KEYWORD_MAP = {
     "ICICIBANK": ["icici bank", "icici", "sandeep bakhshi", "chanda kochhar"],
     "SBIN": ["sbi", "state bank of india", "dinesh khara", "cs setty"],
     "AXISBANK": ["axis bank", "amitabh chaudhry"],
-    "KOTAKBANK": ["kotak mahindra", "kotak bank", "uday kotak", "ashok vaswani"],
+    "KOTAKBANK": ["kotak mahindra", "kotak bank", "uday kotak"],
     "RELIANCE": ["reliance industries", "mukesh ambani", "jio financial"],
-    "TATAMOTORS": ["tata motors", "jlr", "jaguar land rover"],
-    "SYSTEMIC": ["modi", "prime minister", "parliament", "election", "rbi", "repo rate", "budget", "sebi", "war"]
+    "TATAMOTORS": ["tata motors", "jlr"],
+    "SYSTEMIC": ["modi", "prime minister", "parliament", "election", "rbi", "repo rate", "budget", "sebi", "war", "nifty", "sensex", "crash", "surge", "lockdown"]
 }
 
-# Multi-Source Financial RSS Feeds
 EXPANDED_RSS_FEEDS = [
-    # Economic Times
     ("Economic Times - Markets", "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms"),
     ("Economic Times - Stocks", "https://economictimes.indiatimes.com/markets/stocks/rssfeeds/2146842.cms"),
     ("Economic Times - Economy", "https://economictimes.indiatimes.com/news/economy/rssfeeds/1373380680.cms"),
-    
-    # LiveMint
     ("LiveMint - Markets", "https://www.livemint.com/rss/markets"),
     ("LiveMint - Companies", "https://www.livemint.com/rss/companies"),
-    
-    # MoneyControl
     ("MoneyControl - Top News", "https://www.moneycontrol.com/rss/MCtopnews.xml"),
     ("MoneyControl - Business", "https://www.moneycontrol.com/rss/business.xml"),
-    ("MoneyControl - Market Reports", "https://www.moneycontrol.com/rss/marketreports.xml"),
-    
-    # Financial Express
     ("Financial Express - Market", "https://www.financialexpress.com/market/feed/")
 ]
 
-# Targeted Google News Query Feeds
 TARGETED_GOOGLE_QUERIES = [
     "Nifty+50+Sensex+crash+OR+surge+stock+market",
     "RBI+repo+rate+inflation+policy+announcement",
@@ -73,7 +63,6 @@ TARGETED_GOOGLE_QUERIES = [
     "SEBI+regulatory+investigation+crackdown+market"
 ]
 
-# Curated Historical Market Shocks & Systemic Turning Points (1998 - 2024)
 CURATED_HISTORICAL_SHOCKS = [
     {"Date": "2000-03-01", "News": "Dot-Com bubble burst triggers global tech rout; Indian IT software stocks face severe valuation contraction", "Entities": ["TCS", "INFY", "WIPRO", "SYSTEMIC"]},
     {"Date": "2001-03-02", "News": "Ketan Parekh stock market scam unfolds; SEBI initiates investigation as markets plunge into panic", "Entities": ["SYSTEMIC"]},
@@ -101,7 +90,7 @@ CURATED_HISTORICAL_SHOCKS = [
 
 def clean_text(text):
     text = re.sub(r'[\r\n\t]+', ' ', text)
-    text = re.sub(r'<[^>]+>', ' ', text)  # remove html
+    text = re.sub(r'<[^>]+>', ' ', text)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
@@ -115,108 +104,46 @@ def detect_entities(headline):
                 break
     return list(set(detected))
 
-def fetch_all_rss_streams():
-    """Fetches articles across all configured Indian financial RSS feeds."""
-    headers = {"User-Agent": "Mozilla/5.0 (CrafTrade News Aggregator v2.0)"}
-    records = []
-    print("[*] 1/4 Ingesting Multi-Publisher Financial RSS Streams...")
-
-    for label, feed_url in EXPANDED_RSS_FEEDS:
-        try:
-            resp = requests.get(feed_url, headers=headers, timeout=12)
-            if resp.status_code == 200:
-                root = ET.fromstring(resp.content)
-                count = 0
-                for item in root.findall('.//item'):
-                    title_elem = item.find('title')
-                    date_elem = item.find('pubDate')
-                    if title_elem is not None and title_elem.text:
-                        hl = clean_text(title_elem.text)
-                        dt = date_elem.text if date_elem is not None else datetime.today().strftime('%Y-%m-%d')
-                        entities = detect_entities(hl)
-                        records.append({
-                            "Date": dt,
-                            "News": hl,
-                            "Entities": entities,
-                            "Source": label
-                        })
-                        count += 1
-                print(f"    -> {label}: {count} headlines retrieved.")
-        except Exception as e:
-            print(f"    [!] Error pulling {label}: {e}")
-
-    return records
-
-def fetch_targeted_google_news():
-    """Pulls targeted topic feeds from Google News."""
-    headers = {"User-Agent": "Mozilla/5.0"}
-    records = []
-    print("[*] 2/4 Ingesting Targeted Macro, Political, and Sector Feeds...")
-
-    for query in TARGETED_GOOGLE_QUERIES:
-        url = f"https://news.google.com/rss/search?q={query}+when:7d&hl=en-IN&gl=IN&ceid=IN:en"
-        try:
-            resp = requests.get(url, headers=headers, timeout=12)
-            if resp.status_code == 200:
-                root = ET.fromstring(resp.content)
-                count = 0
-                for item in root.findall('.//item'):
-                    title_elem = item.find('title')
-                    date_elem = item.find('pubDate')
-                    if title_elem is not None and title_elem.text:
-                        hl = clean_text(title_elem.text)
-                        dt = date_elem.text if date_elem is not None else datetime.today().strftime('%Y-%m-%d')
-                        entities = detect_entities(hl)
-                        records.append({
-                            "Date": dt,
-                            "News": hl,
-                            "Entities": entities,
-                            "Source": f"GoogleNews: {query[:25]}"
-                        })
-                        count += 1
-                print(f"    -> Query [{query[:30]}...]: {count} headlines.")
-        except Exception as e:
-            print(f"    [!] Error pulling query {query}: {e}")
-
-    return records
-
-def fetch_yfinance_ticker_news():
-    """Pulls institutional company news directly via Yahoo Finance."""
-    if yf is None:
-        return []
+def split_daily_stream_into_headlines(stream_text: str):
+    """
+    Splits the long concatenated daily text dump in news/*.txt into discrete headlines.
+    Handles duplicate phrases and headline boundaries.
+    """
+    stream_text = re.sub(r'\s+', ' ', stream_text).strip()
+    # Split on boundary: lowercase or punctuation followed by capital word
+    chunks = re.split(r'(?<=[a-z0-9\.\?\!\'\”\’\)])\s+(?=[A-Z][a-z])', stream_text)
     
-    records = []
-    print("[*] 3/4 Ingesting Ticker-Specific Feeds via Yahoo Finance...")
-    tickers = ["TCS.NS", "INFY.NS", "WIPRO.NS", "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "RELIANCE.NS"]
-    
-    for t_sym in tickers:
-        try:
-            t = yf.Ticker(t_sym)
-            news_items = getattr(t, "news", [])
-            for item in news_items:
-                title = item.get("title", "")
-                if title:
-                    dt = datetime.fromtimestamp(item.get("providerPublishTime", datetime.today().timestamp())).strftime('%Y-%m-%d')
-                    clean_hl = clean_text(title)
-                    records.append({
-                        "Date": dt,
-                        "News": clean_hl,
-                        "Entities": [t_sym.replace(".NS", "")],
-                        "Source": f"YahooFinance ({t_sym})"
-                    })
-            print(f"    -> {t_sym}: {len(news_items)} corporate news items.")
-        except Exception as e:
-            print(f"    [!] Error pulling yfinance news for {t_sym}: {e}")
+    clean_list = []
+    seen = set()
+    for item in chunks:
+        item = item.strip()
+        if len(item) < 18 or len(item.split()) < 4:
+            continue
+            
+        # Deduplicate duplicated strings within chunk (e.g. "Headline Headline")
+        words = item.split()
+        half = len(words) // 2
+        if half >= 4 and " ".join(words[:half]) == " ".join(words[half:2*half]):
+            item = " ".join(words[:half])
+            
+        lower_item = item.lower()
+        if lower_item not in seen:
+            seen.add(lower_item)
+            clean_list.append(item)
+            
+    return clean_list
 
-    return records
-
-def parse_existing_archives():
-    """Segments existing historical archives in ./news/ into discrete records."""
-    print("[*] 4/4 Parsing Existing News Text Archives...")
-    os.makedirs(NEWS_OUTPUT_DIR, exist_ok=True)
-    records = []
-
+def parse_local_historical_archives():
+    """
+    Parses all ~100 archive files in ./news/ (spanning 2010 to 2024).
+    Extracts hundreds of thousands of discrete headlines.
+    """
     archive_files = glob.glob(os.path.join(RAW_NEWS_DIR, "*.txt"))
+    print(f"[*] 1/4 Parsing {len(archive_files)} Local Archive Files in ./news/ (2010 - 2024)...")
+    
+    records = []
+    total_parsed = 0
+    
     for filepath in archive_files:
         try:
             with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
@@ -228,63 +155,169 @@ def parse_existing_archives():
                 if not line_str:
                     continue
                 
+                # Check for date line: D-M-YYYY or DD-MM-YYYY
                 date_match = re.match(r'^(\d{1,2})-(\d{1,2})-(\d{4})$', line_str)
                 if date_match:
                     d, m, y = date_match.groups()
                     current_date = f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
                     continue
                 
-                if current_date and len(line_str.split()) >= 4:
-                    records.append({
-                        "Date": current_date,
-                        "News": line_str[:1500],
-                        "Entities": detect_entities(line_str),
-                        "Source": "HistoricalArchive"
-                    })
+                if current_date:
+                    headlines = split_daily_stream_into_headlines(line_str)
+                    for hl in headlines:
+                        records.append({
+                            "Date": current_date,
+                            "News": hl,
+                            "Entities": detect_entities(hl),
+                            "Source": "ET_Local_Archive"
+                        })
+                    total_parsed += len(headlines)
         except Exception as e:
-            print(f"    [!] Error parsing archive {filepath}: {e}")
+            print(f"    [!] Error parsing {filepath}: {e}")
+            
+    print(f"[+] Successfully extracted {total_parsed:,} individual headlines from local archives!")
+    return records
 
+def fetch_rss_and_web_feeds():
+    """Fetches real-time feeds till date."""
+    headers = {"User-Agent": "Mozilla/5.0"}
+    records = []
+    print("[*] 2/4 Ingesting Multi-Source Financial RSS Streams (Till Date)...")
+
+    for label, feed_url in EXPANDED_RSS_FEEDS:
+        try:
+            resp = requests.get(feed_url, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                root = ET.fromstring(resp.content)
+                count = 0
+                for item in root.findall('.//item'):
+                    title = item.find('title')
+                    pdate = item.find('pubDate')
+                    if title is not None and title.text:
+                        hl = clean_text(title.text)
+                        dt = pdate.text if pdate is not None else datetime.today().strftime('%Y-%m-%d')
+                        records.append({
+                            "Date": dt,
+                            "News": hl,
+                            "Entities": detect_entities(hl),
+                            "Source": label
+                        })
+                        count += 1
+                print(f"    -> {label}: {count} live headlines.")
+        except Exception:
+            continue
+
+    print("[*] 3/4 Ingesting Google News Multi-Topic Streams...")
+    for query in TARGETED_GOOGLE_QUERIES:
+        url = f"https://news.google.com/rss/search?q={query}+when:7d&hl=en-IN&gl=IN&ceid=IN:en"
+        try:
+            resp = requests.get(url, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                root = ET.fromstring(resp.content)
+                for item in root.findall('.//item'):
+                    title = item.find('title')
+                    pdate = item.find('pubDate')
+                    if title is not None and title.text:
+                        hl = re.sub(r' - [^-]+$', '', clean_text(title.text))
+                        records.append({
+                            "Date": pdate.text if pdate is not None else datetime.today().strftime('%Y-%m-%d'),
+                            "News": hl,
+                            "Entities": detect_entities(hl),
+                            "Source": "GoogleNews"
+                        })
+        except Exception:
+            continue
+
+    return records
+
+def fetch_yfinance_news():
+    """Pulls recent corporate press items via yfinance."""
+    if yf is None:
+        return []
+    records = []
+    print("[*] 4/4 Ingesting YFinance Corporate News...")
+    for sym in ["TCS.NS", "INFY.NS", "WIPRO.NS", "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "RELIANCE.NS"]:
+        try:
+            t = yf.Ticker(sym)
+            for item in getattr(t, "news", []):
+                title = item.get("title", "")
+                if title:
+                    dt = datetime.fromtimestamp(item.get("providerPublishTime", datetime.today().timestamp())).strftime('%Y-%m-%d')
+                    records.append({
+                        "Date": dt,
+                        "News": clean_text(title),
+                        "Entities": [sym.replace(".NS", "")],
+                        "Source": f"YFinance_{sym}"
+                    })
+        except Exception:
+            continue
     return records
 
 def run_pipeline():
     os.makedirs(NEWS_OUTPUT_DIR, exist_ok=True)
-    
-    all_data = []
+    all_news = []
+
     # 1. Curated Shocks
     for shock in CURATED_HISTORICAL_SHOCKS:
-        all_data.append({
+        all_news.append({
             "Date": shock["Date"],
             "News": shock["News"],
             "Entities": shock["Entities"],
             "Source": "CuratedHistoricalShocks"
         })
-    print(f"[+] Loaded {len(CURATED_HISTORICAL_SHOCKS)} curated historical turning point events.")
 
-    # 2. RSS
-    all_data.extend(fetch_all_rss_streams())
-    
-    # 3. Google News
-    all_data.extend(fetch_targeted_google_news())
-    
+    # 2. Local archives (2010 - 2024) -> Hundreds of thousands of headlines!
+    all_news.extend(parse_local_historical_archives())
+
+    # 3. Live RSS & Google News
+    all_news.extend(fetch_rss_and_web_feeds())
+
     # 4. YFinance
-    all_data.extend(fetch_yfinance_ticker_news())
-    
-    # 5. Existing Archives
-    all_data.extend(parse_existing_archives())
+    all_news.extend(fetch_yfinance_news())
 
-    df = pd.DataFrame(all_data)
+    # Check for optional Kaggle dataset if user downloaded it
+    kaggle_csv = os.path.join(NEWS_OUTPUT_DIR, "india-news-headlines.csv")
+    if os.path.exists(kaggle_csv):
+        print(f"[*] Found Kaggle master news file {kaggle_csv}. Ingesting...")
+        try:
+            k_df = pd.read_csv(kaggle_csv)
+            # Standard columns: publish_date (YYYYMMDD), headline_category, headline_text
+            if 'headline_text' in k_df.columns and 'publish_date' in k_df.columns:
+                # Filter business/market categories or keywords to keep it focused
+                k_df = k_df.dropna(subset=['headline_text'])
+                k_records = []
+                for _, r in k_df.iterrows():
+                    h_text = str(r['headline_text'])
+                    ents = detect_entities(h_text)
+                    if ents:
+                        dt_str = str(r['publish_date'])
+                        if len(dt_str) == 8:
+                            fmt_date = f"{dt_str[:4]}-{dt_str[4:6]}-{dt_str[6:8]}"
+                            k_records.append({
+                                "Date": fmt_date,
+                                "News": h_text,
+                                "Entities": ents,
+                                "Source": "Kaggle_TOI_Archive"
+                            })
+                all_news.extend(k_records)
+                print(f"[+] Added {len(k_records):,} corporate/market headlines from Kaggle dataset.")
+        except Exception as e:
+            print(f"[!] Error reading Kaggle CSV: {e}")
+
+    df = pd.DataFrame(all_news)
     if not df.empty:
         df = df.drop_duplicates(subset=["News"])
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-        df = df.sort_values(by="Date", ascending=False).reset_index(drop=True)
+        df = df.dropna(subset=['Date', 'News']).sort_values(by="Date", ascending=False).reset_index(drop=True)
 
-        master_news_file = os.path.join(NEWS_OUTPUT_DIR, "master_financial_news.csv")
-        df.to_csv(master_news_file, index=False)
-        print("=" * 68)
-        print(f"[+] HIGH-VOLUME NEWS AGGREGATION COMPLETE!")
-        print(f"    Total Distinct Financial News Records: {len(df):,}")
-        print(f"    Destination: {master_news_file}")
-        print("=" * 68)
+        master_file = os.path.join(NEWS_OUTPUT_DIR, "master_financial_news.csv")
+        df.to_csv(master_file, index=False)
+        print("=" * 74)
+        print(f"[+] MULTI-YEAR NEWS AGGREGATION COMPLETE!")
+        print(f"    Total Consolidated Headlines: {len(df):,}")
+        print(f"    Date Range Covered: {df['Date'].min().strftime('%Y-%m-%d')} to {df['Date'].max().strftime('%Y-%m-%d')}")
+        print(f"    Saved to: {master_file}")
+        print("=" * 74)
         return df
 
 if __name__ == "__main__":
