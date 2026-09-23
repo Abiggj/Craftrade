@@ -12,7 +12,7 @@ CORS(app)  # Enable CORS for all routes
 def wasserstein_loss(y_true, y_pred):
     return backend.mean(y_true * y_pred)
 
-generator = models.load_model('.\model_files\generator_model.h5', custom_objects={'wasserstein_loss': wasserstein_loss})
+generator = models.load_model('./model_files/generator_model.h5', custom_objects={'wasserstein_loss': wasserstein_loss})
 discriminator = models.load_model('./model_files/discriminator_model.h5', custom_objects={'wasserstein_loss': wasserstein_loss})
 
 with open('./model_files/tokenizer.pkl', 'rb') as file:
